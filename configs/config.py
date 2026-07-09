@@ -28,14 +28,14 @@ class Config:
     LOGS_DIR = OUTPUT_DIR / "logs"
 
     # Dataset Configuration
-    DATASET_REPO_URL = "https://github.com/saraalemadi/DroneAudioDataset.git"
-    DATASET_NAME = "DroneAudioDataset"
+    DATASET_REPO_URL = None
+    DATASET_NAME = "extracted_wavs"
 
     # ===========================================
     # AUDIO PROCESSING PARAMETERS
     # ===========================================
-    SAMPLE_RATE = 22050          # Hz - Standard for audio ML
-    DURATION = 2.0               # Seconds - Analysis window
+    SAMPLE_RATE = 16000          # Hz - Standard for audio ML
+    DURATION = 1.0               # Seconds - Analysis window
     N_SAMPLES = int(SAMPLE_RATE * DURATION)  # Total samples per clip
 
     # Mel-Spectrogram Configuration
@@ -56,13 +56,13 @@ class Config:
     # ===========================================
     # TRAINING PARAMETERS
     # ===========================================
-    BATCH_SIZE = 32
-    NUM_EPOCHS = 50
+    BATCH_SIZE = 64
+    NUM_EPOCHS = 100
     LEARNING_RATE = 1e-4
     WEIGHT_DECAY = 1e-5           # L2 regularization
 
     # Early Stopping Configuration
-    EARLY_STOPPING_PATIENCE = 10
+    EARLY_STOPPING_PATIENCE = 25
     EARLY_STOPPING_MIN_DELTA = 1e-4
 
     # Data Split Ratios

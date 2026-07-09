@@ -37,8 +37,8 @@ class DataIngestion:
         self.dataset_path = self.data_dir / self.dataset_name
 
         # Potential folder names for binary classification
-        self.drone_keywords = ["drone", "uav", "quadcopter"]
-        self.background_keywords = ["background", "unknown", "noise", "ambient", "safe"]
+        self.drone_keywords = ["drone", "uav", "quadcopter", "1"]
+        self.background_keywords = ["background", "unknown", "noise", "ambient", "safe", "0"]
 
     def clone_repository(self) -> bool:
         """

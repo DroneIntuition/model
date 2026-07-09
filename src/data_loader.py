@@ -147,11 +147,9 @@ class DroneAudioDataset(Dataset):
     """
 
     def __init__(
-        self,
-        drone_files: List[Path],
-        background_files: List[Path],
-        transform: Optional[AudioTransform] = None,
-        augment: bool = False,
+        self, 
+        samples: List[Tuple[Path, int]], 
+        augment: bool = False
     ):
         """
         Initialize the dataset.
@@ -162,27 +160,15 @@ class DroneAudioDataset(Dataset):
             transform: Audio transform pipeline (default: AudioTransform)
             augment: Whether to apply data augmentation
         """
-        self.transform = transform or AudioTransform()
+        self.samples = samples
         self.augment = augment
 
-        # Combine files with labels
-        # Label 0 = Safe (Background), Label 1 = Threat (Drone)
-        self.samples = []
-
-        for file_path in background_files:
-            self.samples.append((file_path, Config.SAFE_LABEL))
-
-        for file_path in drone_files:
-            self.samples.append((file_path, Config.THREAT_LABEL))
-
         print(f"[DATASET] Initialized with {len(self.samples)} samples")
-        print(f"  - Drone (Threat):     {len(drone_files)}")
-        print(f"  - Background (Safe):  {len(background_files)}")
 
     def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
+    def __getitem__(self, idx):
         """
         Get a single sample.
 
@@ -192,16 +178,13 @@ class DroneAudioDataset(Dataset):
         Returns:
             Tuple of (mel_spectrogram_tensor, label)
         """
-        file_path, label = self.samples[idx]
-
-        # Transform audio to spectrogram
-        spectrogram = self.transform(file_path)
-
-        # Apply augmentation if enabled
+        spec_path, label = self.samples[idx]
+        spec = np.load(spec_path)  # загружаем массив (n_mels, time)
+        spec = torch.FloatTensor(spec).unsqueeze(0)  # добавляем канал
+        
         if self.augment:
-            spectrogram = self._augment(spectrogram)
-
-        return spectrogram, label
+            spec = self._augment(spec)
+        return spec, label
 
     def _augment(self, spectrogram: torch.Tensor) -> torch.Tensor:
         """
@@ -256,59 +239,51 @@ def get_data_loaders(
     val_ratio: float = Config.VAL_RATIO,
 ) -> Tuple[DataLoader, DataLoader, DataLoader, torch.Tensor]:
     """
-    Create train, validation, and test data loaders.
-
-    Args:
-        batch_size: Batch size for training
-        num_workers: Number of worker processes
-        train_ratio: Fraction of data for training
-        val_ratio: Fraction of data for validation
-
-    Returns:
-        Tuple of (train_loader, val_loader, test_loader, class_weights)
+    Создаёт train/val/test загрузчики из предварительно обработанных данных.
     """
-    # Get dataset files
-    ingestion = DataIngestion()
+    processed_dir = Config.DATA_DIR / "processed"
+    samples_file = processed_dir / "samples.npy"
 
-    # Ensure data is available
-    if not ingestion.dataset_path.exists():
-        print("[INFO] Dataset not found. Running ingestion...")
-        ingestion.clone_repository()
+    if not samples_file.exists():
+        raise FileNotFoundError(
+            f"Preprocessed data not found at {samples_file}.\n"
+            "Please run: python -m src.preprocess"
+        )
 
-    drone_files, background_files = ingestion.get_all_audio_files()
+    # Загружаем список всех образцов
+    all_samples = np.load(samples_file, allow_pickle=True)   # массив пар (path, label)
 
-    if len(drone_files) == 0 or len(background_files) == 0:
-        raise ValueError("Dataset is empty or not properly downloaded!")
-
-    # Shuffle files
+    # Перемешиваем
     np.random.seed(Config.RANDOM_SEED)
-    np.random.shuffle(drone_files)
-    np.random.shuffle(background_files)
+    indices = np.random.permutation(len(all_samples))
+    all_samples = all_samples[indices]
 
-    # Split each class proportionally
-    def split_files(files: List[Path]) -> Tuple[List, List, List]:
-        n = len(files)
-        train_end = int(n * train_ratio)
-        val_end = int(n * (train_ratio + val_ratio))
-        return files[:train_end], files[train_end:val_end], files[val_end:]
+    n = len(all_samples)
+    train_end = int(n * train_ratio)
+    val_end = int(n * (train_ratio + val_ratio))
 
-    drone_train, drone_val, drone_test = split_files(drone_files)
-    bg_train, bg_val, bg_test = split_files(background_files)
+    train_samples = all_samples[:train_end]
+    val_samples = all_samples[train_end:val_end]
+    test_samples = all_samples[val_end:]
 
     print(f"\n[DATA SPLIT]")
-    print(f"  Training:   {len(drone_train)} drone, {len(bg_train)} background")
-    print(f"  Validation: {len(drone_val)} drone, {len(bg_val)} background")
-    print(f"  Test:       {len(drone_test)} drone, {len(bg_test)} background")
+    print(f"  Training:   {len(train_samples)} samples")
+    print(f"  Validation: {len(val_samples)} samples")
+    print(f"  Test:       {len(test_samples)} samples")
 
-    # Create datasets
-    train_dataset = DroneAudioDataset(drone_train, bg_train, augment=True)
-    val_dataset = DroneAudioDataset(drone_val, bg_val, augment=False)
-    test_dataset = DroneAudioDataset(drone_test, bg_test, augment=False)
+    # Создаём датасеты
+    train_dataset = DroneAudioDataset(train_samples, augment=True)
+    val_dataset = DroneAudioDataset(val_samples, augment=False)
+    test_dataset = DroneAudioDataset(test_samples, augment=False)
 
-    # Get class weights from training set
-    class_weights = train_dataset.get_class_weights()
+    # Веса классов (для несбалансированных данных)
+    labels = [label for _, label in all_samples]
+    class_counts = np.bincount(labels)
+    total = len(labels)
+    weights = total / (len(class_counts) * class_counts)
+    class_weights = torch.FloatTensor(weights)
 
-    # Create data loaders
+    # DataLoader'ы
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
@@ -317,7 +292,6 @@ def get_data_loaders(
         pin_memory=Config.PIN_MEMORY,
         drop_last=True,
     )
-
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
@@ -325,7 +299,6 @@ def get_data_loaders(
         num_workers=num_workers,
         pin_memory=Config.PIN_MEMORY,
     )
-
     test_loader = DataLoader(
         test_dataset,
         batch_size=batch_size,
